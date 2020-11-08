@@ -1,0 +1,309 @@
+---
+output:
+  pdf_document: default
+  html_document: default
+---
+
+#Part 1:Data Acquisation
+
+```{r}
+data_lon=read.csv("London_Census.csv")
+data_stat=read.csv("bike_stations.csv")
+data_jour=read.csv("bike_journeys.csv")
+```
+
+
+#R Libraries 
+
+```{r}
+library(GGally)
+library(Amelia)
+library(rsq)
+library(psych)
+library(Metrics)
+library(geosphere)
+library(sp)
+library(maps)
+library(corrplot)
+library(maptools)
+library(ggmap)
+library(lubridate)
+library(ggplot2)
+library(dplyr)
+library(data.table)
+library(ggrepel)
+library(tidyverse)
+
+```
+
+Part 2:Exploratory Data Analysis
+#Building domain knowledge about the data
+
+```{r}
+glimpse(data_jour)#journey data
+glimpse(data_stat)# stations
+glimpse(data_lon)#lon stations
+
+dim(data_stat)
+dim(data_jour)
+dim(data_stat)
+```
+
+#Analysing spatial data using Google Maps
+```{r}
+
+#Set your API Key
+ggmap::register_google(key = "AIzaSy##############################33PGgX3s")
+#In order to have a broader look and develop some domain kowledge plotting wards and..
+#boroughs on the google map  presented a deep look at the distribution.
+#Observed the distribution of the wards and the area of london it covered.
+
+i1<-data_lon%>%
+  group_by(borough,lat,lon)
+i2<-data_stat
+#Creating a map which shows wards and boroughs
+longlat<-c(lon=-0.193781,lat=51.492085)
+map_1<-get_map(longlat,zoom=11,scale=1)
+ggmap(map_1)+geom_point(aes(lon, lat,color=borough), data = i1)
+
+#Creating the map with the objective to understand the stations distributed over the boroughs
+#Found the staions are restricted in the central part of london and not distributed over the whole area of boroughs
+#Could not understand the overlapping stations and wards ,could have helped merging data by those points
+map_1<-get_map(longlat,zoom=11,scale=1)
+longlat2<-c(lon2=-0.131161,lat2=51.52505)
+map_2<-get_map(longlat2,zoom=14,scale=1)
+ggmap(map_1)+geom_point(aes(lon, lat,color=borough), data = i1)+geom_point(aes(Longitude,Latitude),data=i2)
+
+#Check nature of data and relationship between the variables which could solve the problem 
+#journey data
+names(data_jour)
+str(data_jour)
+hist(data_jour$Journey_Duration,data_jour$Start_Station_ID)  
+hist(data_jour)
+#fix(data_jour)
+#End_Month ,End_Year,  End_Date,End_Hour need to be dropped as it is not potentailly helping to solve the problem 
+data_jour= subset(data_jour,select =-c(End_Month,End_Station_ID ,End_Year,  End_Date,End_Hour,End_Minute ))
+
+#understanding paths and frequently travelled area
+#jour_path<-jour_path%>%
+ # group_by(start_staiton)
+
+#understand the paths which are busy
+##ggplot()+geom_line(aes(Journey_Duration,Start_Hour), data = data_jour)
+#understand peak hours of work 
+##ggplot()+geom_line(aes(data_jour$Journey_Duration,data_jour$Start_Hour), data = data_jour)
+
+#data_stat
+names(data_stat)
+#since station id and station name represent the same entity  hence dropping it
+hist(data_stat$Capacity)
+data_stat=subset(data_stat,select =-c(Station_Name) )
+#data_lon
+names(data_lon)
+names(data_jour)
+head(data_jour,1)
+
+#hist()
+
+```
+
+Part 3:Data Preprocessing
+#Transforming data to be used for model development(Processing data/Merging )(Creating a data flow pipeline)
+```{r}
+#data_jour
+head(data_jour)
+sum(is.na(data_jour))
+
+
+#data_stat
+head(data_stat,1)
+sum(is.na(data_stat))
+data_stat$Station_ID = as.factor(data_stat$Station_ID)
+
+sort(unique(data_jour$Start_Station_ID))
+sort(unique(data_stat$Station_ID))
+length(unique(data_stat$Station_Name))
+#some stations  id, are missing 
+#eg.35 and  59 missing in stat
+#wont have great impact on the model
+
+names(data_jour)
+#data_lon
+
+head(data_lon,1)
+sum(is.na(data_lon))#3????
+which(is.na(data_lon))
+complete.cases(data_lon) 
+data_lon$borough[625]="Westminster"
+#this station seems to be Westminister from the map
+
+
+missmap(stations)
+missmap(journey)
+missmap(census)
+ls()
+str(data_stat)
+```
+
+Part 4:Hypothesis development(Problem understanding/break down of hypothsis)
+
+```{r}
+
+############################33333
+node= vector()
+for(i in 1:nrow(data_stat)){
+  dist = vector()
+  for(j in 1:nrow(data_lon)) {
+    x = data_stat$Latitude[i] - data_lon$lat[j]
+    y = data_stat$Longitude[i] - data_lon$lon[j]
+    
+  dist[j] = (x*x) + (y*y)
+  }
+  node[i] = data_lon$WardCode[which.min(dist)]
+  
+}
+data_stat$WardCode = data_lon$WardCode[node]
+
+#merging the census with Stations using wardcode
+mer_data = merge(data_stat,data_lon, by="WardCode")
+head(mer_data)
+
+data_stat$WardCode = data_lon$WardCode[node]
+mer_data= merge(data_stat,data_lon,by="WardCode")
+
+names(mer_data)
+
+##############################################
+#final transformation
+data_jour$Journey_Duration=data_jour$Journey_Duration/3600
+jour_group = data_jour%>% 
+  unite(Date, c("Start_Month","Start_Date","Start_Year"), sep = "/")
+
+jour_group$Date = as.Date(jour_group$Date, format = "%m/%d/%y")
+
+
+glimpse(jour_group)
+
+
+Jour_hr = jour_group %>% 
+  group_by(Start_Station_ID,Date, Start_Hour)%>%
+  #jour_count=as.numeric(Jour_hr$jour_count)
+  summarise(count = n())
+
+Jour_hr
+
+names(Jour_hr)[names(Jour_hr) == "Start_Station_ID"] = "Station_ID"
+merge_final = merge(mer_data,Jour_hr, by ="Station_ID")
+
+
+names(merge_final)
+dim(merge_final)
+length(unique(merge_final$Station_ID))
+sum(is.na(merge_final))
+Jour_hr=subset(Jour_hr,select =-c(Date))
+
+Jour_hr_st=Jour_hr%>%
+ group_by(Start_Hour)
+ arrange(count)
+Jour_hr_st
+  #group_by(count,Start_Hour)
+  
+########################
+#boxplot for outliers
+#boxplot(data_jour$Journey_Duration~data_jour$Start_Date)
+#understand zero journey
+
+```
+
+
+#Correlation testing
+```{r}
+
+#corelation testing for the variables
+#corr_test<-merge_final%>%
+ # select("jour_count")
+#corr_test2<-merge_final%>%
+ # select("NoEmployee","MedHPrice","MedHPrice","Latitude", "Longitude","AreaSqKm","lon","lat","IncomeScor","LivingEnSc","NoEmployee","MedHPrice","NoOwndDwel","NoHouses","NoFlats","NoDwelling","NoCTFtoH","NotBornUK","BornUK")
+
+corr_test2<-merge_final%>%
+  select(count,NoEmployee,MedHPrice,MedHPrice,Latitude, Longitude,AreaSqKm,lon,lat,IncomeScor,LivingEnSc,NoEmployee,MedHPrice,NoOwndDwel,NoHouses,NoFlats,NoDwelling,NoCTFtoH,NotBornUK,BornUK)
+
+corr_test=corr.test(corr_test2)
+
+corr_test=cor(corr_test2)
+corrplot(corr_test,order="original")
+
+ggcorr(corr_test2,label=TRUE)
+
+
+
+names(merge_final)
+
+
+
+
+```
+
+
+Part 5:#Model Development(OPtimizting/Testing data)
+```{r}
+set.seed(100)
+
+rowIndex=sample(1:nrow(merge_final), 0.8*nrow(merge_final))
+data_train=merge_final[rowIndex,]
+data_test=merge_final[-rowIndex,]
+
+
+#modelling
+lm1 = lm(count~ ., data =data_train)
+lm1=lm(count~AreaSqKm+NoEmployee+MedHPrice+PopDen+Capacity+Start_Hour+IncomeScor+NoFlats+NoHouses+Station_ID+LivingEnSc,data =data_train)
+
+
+
+lm2 = lm(log(count) ~ AreaSqKm+NoEmployee+MedHPrice+PopDen+Capacity+Start_Hour+IncomeScor+NoFlats+NoHouses+Station_ID+LivingEnSc,data =data_train)
+summary(lm2)
+
+
+predicted <- predict(lm2, newdata = test)
+test_results <- data.frame(predicted = exp(predicted), actual = test$medv)
+
+
+data_test$preds = predict(lm2, data_test)
+data_test$actual = data_test$count
+
+
+predicted <- predict(lm2, newdata = data_test)
+
+test_results <- data.frame(predicted = exp(predicted), actual = data_test$count)
+
+
+ggplot(test_results, aes(x=actual, y=predicted)) +
+geom_point() +
+geom_smooth(method = "lm")
+
+
+
+
+
+
+
+
+
+
+ggplot(lm2, aes(x=data_test$actuals, y=data_test$preds)) +
+geom_point() +
+geom_smooth(method = "lm")
+
+head(data_test$actuals)
+
+
+nrow(merge_final)
+#######
+
+rsq(lm1)
+
+summary(lm2)
+data_test$actuals
+test_results
+```
+
